@@ -1,0 +1,56 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://lover:${DB_PASSWORD:-your_secure_password}@db:5432/love_journal?schema=public
+      - AUTH_SECRET=${AUTH_SECRET:-change-this-to-a-random-secret-at-least-32-chars}
+      - AUTH_URL=${AUTH_URL:-http://localhost:3000}
+      - UPLOAD_DIR=/app/uploads
+      - NEXT_PUBLIC_APP_NAME=Our Love Journal
+    volumes:
+      - uploads_data:/app/uploads
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: love_journal
+      POSTGRES_USER: lover
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-your_secure_password}
+    # ports:
+    #   - "5432:5432"  # 生产环境不暴露数据库端口
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lover -d love_journal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Run migrations on startup
+  migrate:
+    build:
+      context: .
+      target: migrator
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://lover:${DB_PASSWORD:-your_secure_password}@db:5432/love_journal?schema=public
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol http2 --url http://app:3000
+    depends_on:
+      - app
+
+volumes:
+  pg_data:
+  uploads_data:
