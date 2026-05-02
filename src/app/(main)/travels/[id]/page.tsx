@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -16,7 +16,7 @@ interface TravelSpot {
   name: string;
   city: string | null;
   country: string | null;
-  latitude: string; // Decimal from Prisma comes as string
+  latitude: string;
   longitude: string;
   visitDate: string | null;
   note: string | null;
@@ -35,6 +35,16 @@ interface Travel {
   spots: TravelSpot[];
 }
 
+interface GeocodeResult {
+  id: string;
+  name: string;
+  city: string | null;
+  country: string | null;
+  latitude: number;
+  longitude: number;
+  displayName: string;
+}
+
 const statusLabels: Record<string, { label: string; icon: string }> = {
   planned: { label: "计划中", icon: "📋" },
   ongoing: { label: "进行中", icon: "🚗" },
@@ -42,7 +52,6 @@ const statusLabels: Record<string, { label: string; icon: string }> = {
 };
 
 export default function TravelDetailPage() {
-  const router = useRouter();
   const params = useParams();
   const id = params.id as string;
 
@@ -54,6 +63,7 @@ export default function TravelDetailPage() {
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [coverCropSrc, setCoverCropSrc] = useState<string | null>(null);
+  const [coverError, setCoverError] = useState("");
 
   // Add spot form state
   const [showAddSpot, setShowAddSpot] = useState(false);
@@ -70,9 +80,31 @@ export default function TravelDetailPage() {
   const [addingSpot, setAddingSpot] = useState(false);
   const [spotError, setSpotError] = useState("");
   const [spotCropSrc, setSpotCropSrc] = useState<string | null>(null);
+  const [spotCropIndex, setSpotCropIndex] = useState<number | null>(null);
+
+  // Geocode search
+  const [searchingSpotLocation, setSearchingSpotLocation] = useState(false);
+  const [spotSearchResults, setSpotSearchResults] = useState<GeocodeResult[]>([]);
+  const [spotSearchError, setSpotSearchError] = useState("");
+  const [selectedLocation, setSelectedLocation] = useState<GeocodeResult | null>(null);
+
+  // Reposition existing spots
+  const [repositioningSpotId, setRepositioningSpotId] = useState<string | null>(null);
+  const [repositionResults, setRepositionResults] = useState<Record<string, GeocodeResult[]>>({});
+  const [repositionErrors, setRepositionErrors] = useState<Record<string, string>>({});
+  const [repositionLoading, setRepositionLoading] = useState<Record<string, boolean>>({});
 
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false);
+
+  // Quick upload
+  const quickFileInputRef = useRef<HTMLInputElement>(null);
+  const [quickFiles, setQuickFiles] = useState<File[]>([]);
+  const [quickPreviews, setQuickPreviews] = useState<string[]>([]);
+  const [quickUploading, setQuickUploading] = useState(false);
+  const [quickError, setQuickError] = useState("");
+  const [quickCropSrc, setQuickCropSrc] = useState<string | null>(null);
+  const [quickCropIndex, setQuickCropIndex] = useState<number | null>(null);
 
   // Photo viewer
   const [viewingPhotos, setViewingPhotos] = useState<string[] | null>(null);
@@ -116,6 +148,7 @@ export default function TravelDetailPage() {
     if (!travel) return;
 
     setUploadingCover(true);
+    setCoverError("");
     try {
       const formData = new FormData();
       formData.append("files", croppedFile);
@@ -126,7 +159,8 @@ export default function TravelDetailPage() {
       });
 
       if (!uploadRes.ok) {
-        console.error("Cover upload failed");
+        const errData = await uploadRes.json().catch(() => ({}));
+        setCoverError(errData.error || "封面上传失败");
         return;
       }
 
@@ -141,10 +175,13 @@ export default function TravelDetailPage() {
 
         if (updateRes.ok) {
           setTravel((prev) => (prev ? { ...prev, coverUrl } : prev));
+        } else {
+          const errData = await updateRes.json().catch(() => ({}));
+          setCoverError(errData.error || "封面保存失败");
         }
       }
     } catch {
-      console.error("Cover upload error");
+      setCoverError("封面上传出错，请稍后再试");
     } finally {
       setUploadingCover(false);
     }
@@ -154,8 +191,178 @@ export default function TravelDetailPage() {
   const handleMapClick = (lat: number, lng: number) => {
     setSpotLat(lat.toFixed(6));
     setSpotLng(lng.toFixed(6));
+    setSelectedLocation({
+      id: "map-selection",
+      name: spotName || "地图选点",
+      city: spotCity || null,
+      country: spotCountry || null,
+      latitude: lat,
+      longitude: lng,
+      displayName: `地图选点 (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+    });
     if (!showAddSpot) {
       setShowAddSpot(true);
+    }
+  };
+
+  const searchLocation = async ({
+    name,
+    city,
+    country,
+  }: {
+    name: string;
+    city?: string | null;
+    country?: string | null;
+  }) => {
+    const searchParams = new URLSearchParams({
+      name: name.trim(),
+    });
+
+    if (city?.trim()) {
+      searchParams.set("city", city.trim());
+    }
+
+    if (country?.trim()) {
+      searchParams.set("country", country.trim());
+    }
+
+    const res = await fetch(`/api/geocode?${searchParams.toString()}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "地点搜索失败");
+    }
+
+    return (data.results || []) as GeocodeResult[];
+  };
+
+  const handleSearchSpotLocation = async () => {
+    if (!spotName.trim()) {
+      setSpotSearchError("请填写地点名称，或者同时填写城市或国家");
+      return;
+    }
+
+    setSpotSearchError("");
+    setSpotSearchResults([]);
+    setSearchingSpotLocation(true);
+
+    try {
+      const results = await searchLocation({
+        name: spotName,
+        city: spotCity,
+        country: spotCountry,
+      });
+      setSpotSearchResults(results);
+      if (results.length === 0) {
+        setSpotSearchError("没有找到匹配地点，请换个关键词试试，也可以直接在上方地图点选");
+      }
+    } catch (err) {
+      setSpotSearchError(err instanceof Error ? err.message : "地点搜索失败");
+    } finally {
+      setSearchingSpotLocation(false);
+    }
+  };
+
+  const applySpotLocation = (result: GeocodeResult) => {
+    setSpotLat(result.latitude.toFixed(6));
+    setSpotLng(result.longitude.toFixed(6));
+    setSelectedLocation(result);
+    setSpotSearchResults([]);
+    setSpotSearchError("");
+
+    if (!spotCity && result.city) {
+      setSpotCity(result.city);
+    }
+    if (!spotCountry && result.country) {
+      setSpotCountry(result.country);
+    }
+  };
+
+  const clearSpotForm = () => {
+    setSpotName("");
+    setSpotCity("");
+    setSpotCountry("");
+    setSpotLat("");
+    setSpotLng("");
+    setSpotDate("");
+    setSpotNote("");
+    setSpotFiles([]);
+    setSpotPreviews([]);
+    setSpotSearchResults([]);
+    setSpotSearchError("");
+    setSelectedLocation(null);
+  };
+
+  const handleSearchExistingSpot = async (spot: TravelSpot) => {
+    if (!spot.name.trim()) {
+      setRepositionErrors((prev) => ({
+        ...prev,
+        [spot.id]: "缺少地点名称，无法自动查询",
+      }));
+      return;
+    }
+
+    setRepositioningSpotId(spot.id);
+    setRepositionErrors((prev) => ({ ...prev, [spot.id]: "" }));
+    setRepositionResults((prev) => ({ ...prev, [spot.id]: [] }));
+    setRepositionLoading((prev) => ({ ...prev, [spot.id]: true }));
+
+    try {
+      const results = await searchLocation({
+        name: spot.name,
+        city: spot.city,
+        country: spot.country,
+      });
+      setRepositionResults((prev) => ({ ...prev, [spot.id]: results }));
+      if (results.length === 0) {
+        setRepositionErrors((prev) => ({
+          ...prev,
+          [spot.id]: "没有找到匹配地点，请尝试修改名称后重试，或直接在地图上手动定位",
+        }));
+      }
+    } catch (err) {
+      setRepositionErrors((prev) => ({
+        ...prev,
+        [spot.id]: err instanceof Error ? err.message : "地点搜索失败",
+      }));
+    } finally {
+      setRepositionLoading((prev) => ({ ...prev, [spot.id]: false }));
+    }
+  };
+
+  const handleApplyExistingSpotLocation = async (
+    spot: TravelSpot,
+    result: GeocodeResult
+  ) => {
+    setRepositionErrors((prev) => ({ ...prev, [spot.id]: "" }));
+    setRepositionLoading((prev) => ({ ...prev, [spot.id]: true }));
+
+    try {
+      const res = await fetch(`/api/travels/${id}/spots`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          spotId: spot.id,
+          latitude: result.latitude,
+          longitude: result.longitude,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "更新地点失败");
+      }
+
+      setRepositionResults((prev) => ({ ...prev, [spot.id]: [] }));
+      setRepositioningSpotId(null);
+      await fetchTravel();
+    } catch (err) {
+      setRepositionErrors((prev) => ({
+        ...prev,
+        [spot.id]: err instanceof Error ? err.message : "更新地点失败",
+      }));
+    } finally {
+      setRepositionLoading((prev) => ({ ...prev, [spot.id]: false }));
     }
   };
 
@@ -173,11 +380,10 @@ export default function TravelDetailPage() {
         reader.readAsDataURL(file);
       }
     });
-    // Reset input so same file can be re-selected
     if (spotFileInputRef.current) spotFileInputRef.current.value = "";
   };
 
-  // Crop a spot photo (replace the file at given index)
+  // Crop a spot photo
   const handleSpotCropDone = (croppedFile: File) => {
     if (spotCropIndex === null) return;
     setSpotFiles((prev) => {
@@ -193,8 +399,6 @@ export default function TravelDetailPage() {
     setSpotCropSrc(null);
     setSpotCropIndex(null);
   };
-
-  const [spotCropIndex, setSpotCropIndex] = useState<number | null>(null);
 
   const removeSpotFile = (index: number) => {
     setSpotFiles((prev) => prev.filter((_, i) => i !== index));
@@ -217,7 +421,6 @@ export default function TravelDetailPage() {
 
     setAddingSpot(true);
     try {
-      // 1. Create the spot
       const res = await fetch(`/api/travels/${id}/spots`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -241,7 +444,6 @@ export default function TravelDetailPage() {
 
       const spot = await res.json();
 
-      // 2. Upload photos if any
       if (spotFiles.length > 0) {
         const formData = new FormData();
         spotFiles.forEach((file) => formData.append("files", file));
@@ -258,7 +460,6 @@ export default function TravelDetailPage() {
               (m: { fileUrl: string }) => m.fileUrl
             );
 
-            // 3. Update spot with photo URLs
             await fetch(`/api/travels/${id}/spots`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
@@ -271,16 +472,7 @@ export default function TravelDetailPage() {
         }
       }
 
-      // Reset form and refresh
-      setSpotName("");
-      setSpotCity("");
-      setSpotCountry("");
-      setSpotLat("");
-      setSpotLng("");
-      setSpotDate("");
-      setSpotNote("");
-      setSpotFiles([]);
-      setSpotPreviews([]);
+      clearSpotForm();
       setShowAddSpot(false);
       fetchTravel();
     } catch {
@@ -424,6 +616,9 @@ export default function TravelDetailPage() {
             )}
           </button>
         )}
+        {coverError && (
+          <p className="mt-2 text-sm text-[var(--color-danger)]">{coverError}</p>
+        )}
       </div>
 
       {/* Header */}
@@ -497,6 +692,15 @@ export default function TravelDetailPage() {
           <MapView
             spots={mapSpots}
             onMapClick={handleMapClick}
+            temporarySelection={
+              selectedLocation
+                ? {
+                    latitude: selectedLocation.latitude,
+                    longitude: selectedLocation.longitude,
+                    label: selectedLocation.displayName,
+                  }
+                : null
+            }
             height="350px"
           />
         </div>
@@ -519,8 +723,7 @@ export default function TravelDetailPage() {
                 type="button"
                 onClick={() => {
                   setShowAddSpot(false);
-                  setSpotFiles([]);
-                  setSpotPreviews([]);
+                  clearSpotForm();
                 }}
                 className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
               >
@@ -554,11 +757,62 @@ export default function TravelDetailPage() {
               />
             </div>
 
+            {/* Auto-locate */}
+            <div className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-3 space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-[var(--color-text)]">自动查询位置</p>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                    填写地点名称后点击查找，可同时填写城市/国家更精准定位
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleSearchSpotLocation}
+                  loading={searchingSpotLocation}
+                >
+                  查找位置
+                </Button>
+              </div>
+
+              {selectedLocation && (
+                <div className="rounded-[var(--radius-sm)] bg-white px-3 py-2 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                  已选位置：{selectedLocation.displayName}
+                </div>
+              )}
+
+              {spotSearchError && (
+                <p className="text-sm text-[var(--color-danger)]">{spotSearchError}</p>
+              )}
+
+              {spotSearchResults.length > 0 && (
+                <div className="space-y-2">
+                  {spotSearchResults.map((result) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      onClick={() => applySpotLocation(result)}
+                      className="w-full rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-white px-3 py-2 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-card)]"
+                    >
+                      <div className="text-sm font-medium text-[var(--color-text)]">
+                        {result.name}
+                      </div>
+                      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                        {result.displayName}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <Input
                 id="spotLat"
                 label="纬度 *"
-                placeholder="点击地图自动填入"
+                placeholder="点地图自动填入"
                 value={spotLat}
                 onChange={(e) => setSpotLat(e.target.value)}
                 required
@@ -566,7 +820,7 @@ export default function TravelDetailPage() {
               <Input
                 id="spotLng"
                 label="经度 *"
-                placeholder="点击地图自动填入"
+                placeholder="点地图自动填入"
                 value={spotLng}
                 onChange={(e) => setSpotLng(e.target.value)}
                 required
@@ -695,7 +949,6 @@ export default function TravelDetailPage() {
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
-                    {/* Number badge */}
                     <div className="w-8 h-8 rounded-full bg-[var(--color-primary)] text-white text-sm font-bold flex items-center justify-center flex-shrink-0">
                       {index + 1}
                     </div>
@@ -712,6 +965,9 @@ export default function TravelDetailPage() {
                         {spot.visitDate && (
                           <span>{formatDateDisplay(spot.visitDate)}</span>
                         )}
+                        <span>
+                          {parseFloat(spot.latitude).toFixed(4)}, {parseFloat(spot.longitude).toFixed(4)}
+                        </span>
                       </div>
                       {spot.note && (
                         <p className="text-sm text-[var(--color-text-secondary)] mt-1">
@@ -754,13 +1010,76 @@ export default function TravelDetailPage() {
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDeleteSpot(spot.id)}
-                    className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer flex-shrink-0"
-                  >
-                    删除
-                  </button>
+                  <div className="ml-3 flex flex-col items-end gap-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSearchExistingSpot(spot)}
+                      className="text-xs text-[var(--color-primary)] hover:opacity-80 transition-opacity cursor-pointer"
+                    >
+                      重新定位
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSpot(spot.id)}
+                      className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer"
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
+
+                {/* Reposition UI */}
+                {repositioningSpotId === spot.id && (
+                  <div className="mt-3 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg-soft)] p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--color-text)]">为这个地点重新查询位置</p>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                          默认使用地点名称、城市和国家来搜索位置
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRepositioningSpotId(null);
+                          setRepositionResults((prev) => ({ ...prev, [spot.id]: [] }));
+                          setRepositionErrors((prev) => ({ ...prev, [spot.id]: "" }));
+                        }}
+                        className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                      >
+                        关闭
+                      </button>
+                    </div>
+
+                    {repositionErrors[spot.id] && (
+                      <p className="text-sm text-[var(--color-danger)]">{repositionErrors[spot.id]}</p>
+                    )}
+
+                    {repositionResults[spot.id]?.length ? (
+                      <div className="space-y-2">
+                        {repositionResults[spot.id].map((result) => (
+                          <button
+                            key={result.id}
+                            type="button"
+                            onClick={() => handleApplyExistingSpotLocation(spot, result)}
+                            disabled={!!repositionLoading[spot.id]}
+                            className="w-full rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-white px-3 py-2 text-left transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-bg-card)] disabled:opacity-60"
+                          >
+                            <div className="text-sm font-medium text-[var(--color-text)]">
+                              {result.name}
+                            </div>
+                            <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                              {result.displayName}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[var(--color-text-muted)]">
+                        {repositionLoading[spot.id] ? "查询中..." : "点击上方重新定位按钮，搜索后会在这里显示可选位置"}
+                      </p>
+                    )}
+                  </div>
+                )}
               </Card>
             ))}
           </div>
@@ -784,7 +1103,6 @@ export default function TravelDetailPage() {
               className="max-w-full max-h-[85vh] object-contain rounded-lg"
             />
 
-            {/* Navigation */}
             <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center gap-4">
               <button
                 onClick={() =>
@@ -811,7 +1129,6 @@ export default function TravelDetailPage() {
               </button>
             </div>
 
-            {/* Close button */}
             <button
               onClick={() => setViewingPhotos(null)}
               className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center cursor-pointer hover:bg-black/80 transition-colors"

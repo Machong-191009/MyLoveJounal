@@ -44,3 +44,8 @@ next-env.d.ts
 
 # uploads
 /uploads
+
+# codex / AI configs
+/.codex
+/.obsidian
+/claude-settings.json

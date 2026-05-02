@@ -79,7 +79,7 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { spotId, photos } = body;
+    const { spotId, photos, latitude, longitude, name, city, country, visitDate, note } = body;
 
     if (!spotId) {
       return NextResponse.json({ error: "缺少 spotId" }, { status: 400 });
@@ -94,9 +94,14 @@ export async function PATCH(
     }
 
     const updateData: Record<string, unknown> = {};
-    if (photos !== undefined) {
-      updateData.photos = photos;
-    }
+    if (photos !== undefined) updateData.photos = photos;
+    if (latitude !== undefined) updateData.latitude = latitude;
+    if (longitude !== undefined) updateData.longitude = longitude;
+    if (name !== undefined) updateData.name = name;
+    if (city !== undefined) updateData.city = city || null;
+    if (country !== undefined) updateData.country = country || null;
+    if (visitDate !== undefined) updateData.visitDate = visitDate ? new Date(visitDate) : null;
+    if (note !== undefined) updateData.note = note || null;
 
     const updated = await prisma.travelSpot.update({
       where: { id: spotId },

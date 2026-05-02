@@ -1,14 +1,29 @@
 import { cn } from "@/lib/utils";
-import { CSSProperties, ReactNode } from "react";
+import { CSSProperties, ReactNode, KeyboardEvent } from "react";
 
 interface CardProps {
   children: ReactNode;
   className?: string;
   hover?: boolean;
   style?: CSSProperties;
+  role?: string;
+  tabIndex?: number;
+  ariaLabel?: string;
+  onClick?: () => void;
+  onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void;
 }
 
-export default function Card({ children, className, hover = false, style }: CardProps) {
+export default function Card({
+  children,
+  className,
+  hover = false,
+  style,
+  role,
+  tabIndex,
+  ariaLabel,
+  onClick,
+  onKeyDown,
+}: CardProps) {
   return (
     <div
       className={cn(
@@ -17,6 +32,11 @@ export default function Card({ children, className, hover = false, style }: Card
         className
       )}
       style={style}
+      role={role}
+      tabIndex={tabIndex}
+      aria-label={ariaLabel}
+      onClick={onClick}
+      onKeyDown={onKeyDown}
     >
       {children}
     </div>

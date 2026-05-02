@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { formatDateDisplay } from "@/lib/utils";
@@ -44,6 +45,7 @@ const statusLabels: Record<string, { label: string; color: string; icon: string 
 };
 
 export default function TravelsPage() {
+  const router = useRouter();
   const [travels, setTravels] = useState<Travel[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
@@ -65,6 +67,13 @@ export default function TravelsPage() {
   useEffect(() => {
     fetchTravels();
   }, [fetchTravels]);
+
+  const openTravelDetail = useCallback(
+    (travelId: string) => {
+      router.push(`/travels/${travelId}`);
+    },
+    [router]
+  );
 
   const handleDelete = async (id: string) => {
     if (!confirm("确定要删除这次旅行吗？相关的所有地点也会被删除。")) return;
@@ -212,10 +221,20 @@ export default function TravelsPage() {
               <Card
                 key={travel.id}
                 hover
-                className="overflow-hidden animate-slide-up"
+                className="group overflow-hidden animate-slide-up cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg-card)]"
                 style={
                   { animationDelay: `${index * 0.05}s` } as React.CSSProperties
                 }
+                role="link"
+                tabIndex={0}
+                aria-label={travel.title}
+                onClick={() => openTravelDetail(travel.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openTravelDetail(travel.id);
+                  }
+                }}
               >
                 {/* Cover image or gradient */}
                 {travel.coverUrl ? (
@@ -236,12 +255,9 @@ export default function TravelsPage() {
                 <div className="p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <Link
-                        href={`/travels/${travel.id}`}
-                        className="font-semibold text-base hover:text-[var(--color-primary)] transition-colors"
-                      >
+                      <h2 className="font-semibold text-base transition-colors group-hover:text-[var(--color-primary)]">
                         {travel.title}
-                      </Link>
+                      </h2>
 
                       {/* Status badge */}
                       <div className="flex items-center gap-2 mt-1.5">
@@ -257,7 +273,11 @@ export default function TravelsPage() {
                     </div>
 
                     <button
-                      onClick={() => handleDelete(travel.id)}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDelete(travel.id);
+                      }}
                       className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors cursor-pointer flex-shrink-0"
                     >
                       删除
@@ -295,12 +315,9 @@ export default function TravelsPage() {
                     </div>
                   )}
 
-                  <Link
-                    href={`/travels/${travel.id}`}
-                    className="block mt-3 text-sm text-[var(--color-primary)] hover:underline"
-                  >
+                  <span className="block mt-3 text-sm text-[var(--color-primary)] transition-transform group-hover:translate-x-0.5">
                     查看详情 →
-                  </Link>
+                  </span>
                 </div>
               </Card>
             );

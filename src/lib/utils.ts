@@ -1,8 +1,19 @@
 import { type ClassValue, clsx } from "clsx";
+import path from "path";
 
 // Simple clsx-like utility (without clsx dep)
 export function cn(...inputs: ClassValue[]) {
   return inputs.filter(Boolean).join(" ");
+}
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "uploads";
+
+export function getUploadDir() {
+  return path.join(process.cwd(), UPLOAD_DIR);
+}
+
+export function getThumbDir() {
+  return path.join(getUploadDir(), "thumbs");
 }
 
 /**

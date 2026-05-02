@@ -45,6 +45,12 @@ export interface MapSpot {
   travelTitle?: string;
 }
 
+interface TemporarySelection {
+  latitude: number;
+  longitude: number;
+  label: string;
+}
+
 interface MapViewProps {
   spots: MapSpot[];
   center?: [number, number];
@@ -54,6 +60,7 @@ interface MapViewProps {
   interactive?: boolean;
   showPopups?: boolean;
   className?: string;
+  temporarySelection?: TemporarySelection | null;
 }
 
 export default function MapView({
@@ -65,6 +72,7 @@ export default function MapView({
   interactive = true,
   showPopups = true,
   className = "",
+  temporarySelection,
 }: MapViewProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -146,14 +154,46 @@ export default function MapView({
       }
     });
 
+    // Add temporary selection marker
+    let tempMarker: L.Marker | null = null;
+    if (temporarySelection) {
+      const tempIcon = L.divIcon({
+        html: `<div style="
+          width: 20px; height: 20px;
+          background: #f59e0b;
+          border: 3px solid white;
+          border-radius: 50%;
+          box-shadow: 0 2px 8px rgba(245,158,11,0.5);
+          animation: pulse 1.5s ease-in-out infinite;
+        "></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        className: "",
+      });
+      tempMarker = L.marker([temporarySelection.latitude, temporarySelection.longitude], {
+        icon: tempIcon,
+      }).addTo(map);
+      tempMarker.bindPopup(temporarySelection.label, { closeButton: false });
+    }
+
     // Auto-fit bounds if spots exist
     if (spots.length > 0) {
-      const bounds = L.latLngBounds(
-        spots.map((s) => [s.latitude, s.longitude] as [number, number])
-      );
+      const allPoints = spots.map((s) => [s.latitude, s.longitude] as [number, number]);
+      if (temporarySelection) {
+        allPoints.push([temporarySelection.latitude, temporarySelection.longitude]);
+      }
+      const bounds = L.latLngBounds(allPoints);
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+    } else if (temporarySelection) {
+      map.setView([temporarySelection.latitude, temporarySelection.longitude], 13);
     }
-  }, [spots, showPopups]);
+
+    return () => {
+      if (tempMarker) {
+        map.removeLayer(tempMarker);
+      }
+    };
+  }, [spots, showPopups, temporarySelection]);
 
   return (
     <div

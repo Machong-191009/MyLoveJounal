@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import QrUpload from "@/components/ui/QrUpload";
 
 const navItems = [
   { href: "/", label: "首页", icon: "🏠" },
@@ -43,7 +44,7 @@ export default function Sidebar({ coupleNames }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
           const isActive =
             item.href === "/"
@@ -69,6 +70,9 @@ export default function Sidebar({ coupleNames }: SidebarProps) {
       </nav>
 
       {/* User section */}
+      <div className="border-t border-[var(--color-border)] px-7 py-3">
+        <QrUpload />
+      </div>
       <div className="p-4 border-t border-[var(--color-border)]">
         <Link
           href="/settings"
